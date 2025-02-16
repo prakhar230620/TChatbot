@@ -3,5 +3,4 @@ flask
 python-dotenv
 flask-cors
 flask-socketio
-requests
-jwt
+pymongo
