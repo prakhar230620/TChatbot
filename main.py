@@ -22,6 +22,26 @@ CORS(app, resources={
 # Initialize socketio with CORS settings
 socketio = SocketIO(app, cors_allowed_origins="*")  # In production, replace with your actual domain
 
+
+def validate_user(f):
+    @wraps(f)
+    def decorated_function(*args, **kwargs):
+        user_id = request.args.get('user_id')
+        if not user_id:
+            return redirect('http://localhost:5000/login')
+
+        user = User.get_user_by_email(user_id)
+        if not user:
+            return redirect('http://localhost:5000/login')
+
+        session['user_id'] = user.email
+        session['name'] = user.name
+        session['is_admin'] = user.is_admin
+
+        return f(*args, **kwargs)
+
+    return decorated_function
+
 # Setup routes
 setup_chatbot_routes(app)
 

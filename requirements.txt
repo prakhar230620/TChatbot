@@ -4,3 +4,4 @@ python-dotenv
 flask-cors
 flask-socketio
 pymongo
+werkzeug
