@@ -47,4 +47,4 @@ setup_chatbot_routes(app)
 
 # For local development
 if __name__ == '__main__':
-    app.run(debug=False)
+    app.run(debug=False,port=8080)
