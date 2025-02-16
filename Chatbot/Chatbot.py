@@ -134,7 +134,7 @@ def setup_chatbot_routes(app):
         return render_template('chatbot.html')
 
     @app.route('/api/chat/status')
-    @validate_session 
+    @validate_session
     def check_status():
         try:
             return jsonify({"status": "online"})
@@ -152,10 +152,11 @@ def setup_chatbot_routes(app):
             if not data or 'message' not in data:
                 return jsonify({"error": "No message provided"}), 400
 
-            session_id = data.get('session_id')
+            session_id = session.get('user_id')  # Use user_id as session_id
             if not session_id:
-                return jsonify({"error": "No session ID provided"}), 400
+                return jsonify({"error": "Not authenticated"}), 401
 
+            chatbot = ChatbotHandler()
             result = chatbot.process_message(data['message'], session_id)
 
             if isinstance(result, tuple):
@@ -174,8 +175,8 @@ def setup_chatbot_routes(app):
             return '', 204
 
         try:
-            data = request.get_json()
-            session_id = data.get('session_id')
+            session_id = session.get('user_id')
+            chatbot = ChatbotHandler()
             if session_id and session_id in chatbot.sessions:
                 del chatbot.sessions[session_id]
             return jsonify({"status": "success", "message": "Chat session reset"})
