@@ -45,6 +45,16 @@ def validate_user(f):
 # Setup routes
 setup_chatbot_routes(app)
 
-# For local development
+wsgi_app = app.wsgi_app
+
 if __name__ == '__main__':
-    app.run(debug=False,port=8080)
+    import eventlet
+    import eventlet.wsgi
+
+    # For development
+    if os.environ.get('FLASK_ENV') == 'development':
+        socketio.run(app, debug=True, port=8080)
+    # For production with Waitress
+    else:
+        print("Starting server in production mode...")
+        eventlet.wsgi.server(eventlet.listen(('localhost', 8080)), app)
