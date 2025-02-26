@@ -28,11 +28,11 @@ def validate_user(f):
     def decorated_function(*args, **kwargs):
         user_id = request.args.get('user_id')
         if not user_id:
-            return redirect('http://localhost:5000/login')
+            return redirect('https://toolminesai.in/login')
 
         user = User.get_user_by_email(user_id)
         if not user:
-            return redirect('http://localhost:5000/login')
+            return redirect('https://toolminesai.in/login')
 
         session['user_id'] = user.email
         session['name'] = user.name
@@ -53,8 +53,8 @@ if __name__ == '__main__':
 
     # For development
     if os.environ.get('FLASK_ENV') == 'development':
-        socketio.run(app, debug=True, port=8080)
+        socketio.run(app, debug=True, port=8001)
     # For production with Waitress
     else:
         print("Starting server in production mode...")
-        eventlet.wsgi.server(eventlet.listen(('localhost', 8080)), app)
+        eventlet.wsgi.server(eventlet.listen(('localhost', 8001)), app)
