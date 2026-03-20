@@ -22,8 +22,9 @@ class DatabaseManager:
     
     def connect(self, max_retries=3, retry_delay=5):
         """Connect to MongoDB with retry mechanism"""
-        MONGO_URI = "mongodb+srv://toolminesai:tY9uqb1WnxVf7A6L@mycluster0.u8ntx.mongodb.net/?retryWrites=true&w=majority&appName=Mycluster0"
-        
+        MONGO_URI = os.getenv("MONGO_URI")
+        if not MONGO_URI:
+            raise ValueError("MONGO_URI not found in environment variables")
         for attempt in range(max_retries):
             try:
                 if self._client is not None:

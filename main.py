@@ -1,7 +1,7 @@
 from flask import Flask, render_template, request, jsonify, session, redirect, url_for
 from flask_socketio import SocketIO
 from flask_cors import CORS
-from Chatbot.Chatbot import ChatbotHandler, ChatSession, setup_chatbot_routes
+from Chatbot.Chatbot import ChatbotHandler, setup_chatbot_routes
 from config.user import User
 from config.database import db
 from functools import wraps

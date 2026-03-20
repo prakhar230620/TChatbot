@@ -2,24 +2,19 @@ from groq import Groq
 from flask import render_template, request, jsonify, session
 from datetime import datetime
 import os
+import uuid
 from dotenv import load_dotenv
 from utils.api_key_manager import APIKeyManager
 from utils.auth_middleware import validate_session
+from config.database import db
 
 load_dotenv()
-
-
-class ChatSession:
-    def __init__(self):
-        self.messages = []
-        self.last_interaction = datetime.now()
 
 
 class ChatbotHandler:
     def __init__(self):
         self.api_key_manager = APIKeyManager()
         self.client = None
-        self.sessions = {}  # Temporary session storage
         self.system_prompt = {
             "role": "system",
             "content": """
@@ -41,16 +36,44 @@ class ChatbotHandler:
         """
         }
 
-    def create_session(self, session_id):
-        """Create a new chat session"""
-        session = ChatSession()
-        session.messages.append(self.system_prompt)
-        self.sessions[session_id] = session
-        return session
+    def create_session(self, user_id, first_message):
+        """Create a new chat session in database"""
+        chat_id = str(uuid.uuid4())
+        title = first_message[:30] + '...' if len(first_message) > 30 else first_message
+        session_data = {
+            "chat_id": chat_id,
+            "user_id": user_id,
+            "title": title,
+            "messages": [],
+            "summary": "",
+            "last_interaction": datetime.now()
+        }
+        db.chatsessions.insert_one(session_data)
+        return session_data
 
-    def get_session(self, session_id):
-        """Get or create a session"""
-        return self.sessions.get(session_id)
+    def get_session(self, chat_id, user_id):
+        """Get session from database"""
+        return db.chatsessions.find_one({"chat_id": chat_id, "user_id": user_id})
+
+    def summarize_history(self, messages, current_summary=""):
+        """Summarize conversation history using Groq"""
+        try:
+            prompt = "Please summarize the following conversation concisely. Focus on the main topics discussed and any important details or facts about the user.\n\n"
+            if current_summary:
+                prompt += f"Previous Summary: {current_summary}\n\n"
+            prompt += "Recent Messages to include in summary:\n"
+            for msg in messages:
+                if msg["role"] != "system":
+                    prompt += f"{msg['role'].capitalize()}: {msg['content']}\n"
+            
+            summary_messages = [
+                {"role": "system", "content": "You are a helpful assistant that summarizes conversations accurately and concisely. Keep the summary under 150 words."},
+                {"role": "user", "content": prompt}
+            ]
+            return self.get_groq_response(summary_messages)
+        except Exception as e:
+            print(f"Error summarizing: {e}")
+            return current_summary
 
     def get_groq_response(self, messages):
         while True:
@@ -71,63 +94,74 @@ class ChatbotHandler:
             except Exception as e:
                 error_message = str(e).lower()
                 if "rate limit" in error_message or "quota exceeded" in error_message:
-                    # Mark the current key as having an error
                     self.api_key_manager.mark_key_error(api_key)
                     print(f"API key rate limited, trying another key...")
                     continue
                 else:
-                    # For other errors, raise them
                     raise e
 
-    def process_message(self, message, session_id):
-        if not session_id:
+    def process_message(self, message, user_id, chat_id=None):
+        if not user_id:
             return {"error": "Session expired"}, 401
 
         if not message:
             return {"error": "No message provided"}, 400
 
-        # Get or create session
-        session = self.get_session(session_id)
-        if not session:
-            session = self.create_session(session_id)
+        session_data = None
+        if chat_id:
+            session_data = self.get_session(chat_id, user_id)
+            
+        if not session_data:
+            # If no chat_id passed, or invalid chat_id, create new
+            session_data = self.create_session(user_id, message)
+            chat_id = session_data["chat_id"]
 
-        # Update session timestamp
-        session.last_interaction = datetime.now()
+        MAX_MESSAGES = 12
+        messages = session_data.get("messages", [])
+        summary = session_data.get("summary", "")
 
-        # Add user message to history
-        session.messages.append({"role": "user", "content": message})
+        messages.append({"role": "user", "content": message})
+
+        api_messages = []
+        api_messages.append(self.system_prompt)
+        
+        if summary:
+            api_messages.append({"role": "system", "content": f"Here is a summary of previous context in this conversation: {summary}"})
+        
+        api_messages.extend(messages)
 
         try:
-            # Get chat completion from Groq
-            bot_response = self.get_groq_response(session.messages)
+            bot_response = self.get_groq_response(api_messages)
 
-            # Add bot response to history
-            session.messages.append({"role": "assistant", "content": bot_response})
+            messages.append({"role": "assistant", "content": bot_response})
+
+            if len(messages) > MAX_MESSAGES:
+                num_to_summarize = len(messages) - (MAX_MESSAGES // 2)
+                messages_to_summarize = messages[:num_to_summarize]
+                new_summary = self.summarize_history(messages_to_summarize, summary)
+                messages = messages[num_to_summarize:]
+                summary = new_summary
+
+            db.chatsessions.update_one(
+                {"chat_id": chat_id},
+                {"$set": {
+                    "messages": messages,
+                    "summary": summary,
+                    "last_interaction": datetime.now()
+                }}
+            )
 
             return {
                 "response": bot_response,
+                "chat_id": chat_id,
                 "session_active": True
             }
 
         except Exception as e:
             return {"error": str(e)}, 500
 
-    def cleanup_old_sessions(self):
-        """Remove sessions that are older than 30 minutes"""
-        current_time = datetime.now()
-        for session_id in list(self.sessions.keys()):
-            session = self.sessions[session_id]
-            if (current_time - session.last_interaction).total_seconds() > 1800:  # 30 minutes
-                del self.sessions[session_id]
-
-
-# Initialize chatbot instance
-chatbot = ChatbotHandler()
-
 
 def setup_chatbot_routes(app):
-    """Set up routes for the chatbot with authentication"""
-
     @app.route('/')
     @validate_session
     def chatbot_page():
@@ -141,6 +175,67 @@ def setup_chatbot_routes(app):
         except Exception as e:
             return jsonify({"status": "error", "message": str(e)}), 500
 
+    @app.route('/api/chat/list', methods=['GET'])
+    @validate_session
+    def list_chats():
+        try:
+            user_id = session.get('user_id')
+            if not user_id:
+                return jsonify({"error": "Not authenticated"}), 401
+            
+            chats = list(db.chatsessions.find(
+                {"user_id": user_id}, 
+                {"_id": 0, "chat_id": 1, "title": 1, "last_interaction": 1}
+            ).sort("last_interaction", -1))
+            
+            return jsonify({"chats": chats})
+        except Exception as e:
+            return jsonify({"error": str(e)}), 500
+
+    @app.route('/api/chat/history', methods=['GET'])
+    @validate_session
+    def get_chat_history():
+        """Get history for a specific chat"""
+        try:
+            user_id = session.get('user_id')
+            chat_id = request.args.get('chat_id')
+            
+            if not user_id:
+                return jsonify({"error": "Not authenticated"}), 401
+            if not chat_id:
+                return jsonify({"error": "No chat_id provided"}), 400
+
+            chatbot = ChatbotHandler()
+            session_data = chatbot.get_session(chat_id, user_id)
+            
+            if not session_data or not session_data.get('messages'):
+                return jsonify({"messages": []})
+            
+            chat_history = [
+                {"role": msg["role"], "content": msg["content"]}
+                for msg in session_data["messages"]
+                if msg["role"] != "system"
+            ]
+            
+            return jsonify({"messages": chat_history})
+            
+        except Exception as e:
+            return jsonify({"error": str(e)}), 500
+
+    @app.route('/api/chat/delete', methods=['POST'])
+    @validate_session
+    def delete_chat():
+        try:
+            user_id = session.get('user_id')
+            data = request.get_json()
+            chat_id = data.get('chat_id') if data else None
+            
+            if user_id and chat_id:
+                db.chatsessions.delete_one({"chat_id": chat_id, "user_id": user_id})
+            return jsonify({"status": "success"})
+        except Exception as e:
+            return jsonify({"error": str(e)}), 500
+
     @app.route('/api/chat', methods=['POST', 'OPTIONS'])
     @validate_session
     def handle_message():
@@ -152,12 +247,13 @@ def setup_chatbot_routes(app):
             if not data or 'message' not in data:
                 return jsonify({"error": "No message provided"}), 400
 
-            session_id = session.get('user_id')  # Use user_id as session_id
-            if not session_id:
+            user_id = session.get('user_id')
+            if not user_id:
                 return jsonify({"error": "Not authenticated"}), 401
 
+            chat_id = data.get('chat_id')
             chatbot = ChatbotHandler()
-            result = chatbot.process_message(data['message'], session_id)
+            result = chatbot.process_message(data['message'], user_id, chat_id)
 
             if isinstance(result, tuple):
                 return jsonify(result[0]), result[1]
@@ -166,19 +262,4 @@ def setup_chatbot_routes(app):
 
         except Exception as e:
             print(f"Error in handle_message: {str(e)}")
-            return jsonify({"error": str(e)}), 500
-
-    @app.route('/api/chat/reset', methods=['POST', 'OPTIONS'])
-    @validate_session
-    def reset_chat():
-        if request.method == 'OPTIONS':
-            return '', 204
-
-        try:
-            session_id = session.get('user_id')
-            chatbot = ChatbotHandler()
-            if session_id and session_id in chatbot.sessions:
-                del chatbot.sessions[session_id]
-            return jsonify({"status": "success", "message": "Chat session reset"})
-        except Exception as e:
             return jsonify({"error": str(e)}), 500
