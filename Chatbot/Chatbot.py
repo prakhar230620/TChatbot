@@ -255,6 +255,16 @@ def setup_chatbot_routes(app):
             chatbot = ChatbotHandler()
             result = chatbot.process_message(data['message'], user_id, chat_id)
 
+            # --- Analytics Tracking ---
+            try:
+                import requests
+                analytics_url = os.getenv('ANALYTICS_API_URL', 'https://toolminesai.in/api/track_usage')
+                payload = {'tool_id': 'CHAT001', 'user_id': user_id}
+                requests.post(analytics_url, json=payload, timeout=2.0)
+            except Exception as e:
+                print("Analytics tracking failed:", e)
+            # --------------------------
+
             if isinstance(result, tuple):
                 return jsonify(result[0]), result[1]
 

@@ -2,8 +2,5 @@ groq
 flask
 python-dotenv
 flask-cors
-flask-socketio
 pymongo
 werkzeug
-waitress
-eventlet

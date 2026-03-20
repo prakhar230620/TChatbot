@@ -1,5 +1,4 @@
 from flask import Flask, render_template, request, jsonify, session, redirect, url_for
-from flask_socketio import SocketIO
 from flask_cors import CORS
 from Chatbot.Chatbot import ChatbotHandler, setup_chatbot_routes
 from config.user import User
@@ -18,9 +17,6 @@ CORS(app, resources={
         "supports_credentials": True
     }
 })
-
-# Initialize socketio with CORS settings
-socketio = SocketIO(app, cors_allowed_origins="*")  # In production, replace with your actual domain
 
 
 def validate_user(f):
@@ -48,13 +44,5 @@ setup_chatbot_routes(app)
 wsgi_app = app.wsgi_app
 
 if __name__ == '__main__':
-    import eventlet
-    import eventlet.wsgi
-
-    # For development
-    if os.environ.get('FLASK_ENV') == 'development':
-        socketio.run(app, debug=True, port=8001)
-    # For production with Waitress
-    else:
-        print("Starting server in production mode...")
-        eventlet.wsgi.server(eventlet.listen(('localhost', 8001)), app)
+    # Local development wrapper fallback
+    app.run(debug=False, port=8001)
